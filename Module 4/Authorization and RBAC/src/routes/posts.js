@@ -1,6 +1,6 @@
 const express = require('express');
 const { posts } = require('../data');
-// const requireRole = require('../middleware/requireRole'); // TODO: use for the hide route
+const requireRole = require('../middleware/requireRole');
 
 const router = express.Router();
 
@@ -21,27 +21,45 @@ router.post('/', (req, res) => {
   return res.status(201).json(post);
 });
 
-// Update a post.
-// BUG: any authenticated user can edit ANY post — this is the IDOR.
-// TODO: allow only the owner OR a moderator/admin. Return 404 if the post is missing.
+// Update only owned posts unless caller is moderator/admin.
 router.patch('/:id', (req, res) => {
   const post = posts.find((p) => p.id === req.params.id);
+  if (!post) {
+    return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Post not found' } });
+  }
+
+  const privileged = ['moderator', 'admin'].includes(req.user.role);
+  if (post.authorId !== req.user.id && !privileged) {
+    return res.status(403).json({
+      error: { code: 'FORBIDDEN', message: 'You do not have permission to modify this post' },
+    });
+  }
+
   post.title = req.body?.title ?? post.title;
   return res.status(200).json(post);
 });
 
-// Delete a post.
-// BUG: same IDOR — any authenticated user can delete ANY post.
-// TODO: allow only the owner OR a moderator/admin. Return 404 if the post is missing.
+// Delete only owned posts unless caller is moderator/admin.
 router.delete('/:id', (req, res) => {
   const idx = posts.findIndex((p) => p.id === req.params.id);
+  if (idx === -1) {
+    return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Post not found' } });
+  }
+
+  const post = posts[idx];
+  const privileged = ['moderator', 'admin'].includes(req.user.role);
+  if (post.authorId !== req.user.id && !privileged) {
+    return res.status(403).json({
+      error: { code: 'FORBIDDEN', message: 'You do not have permission to modify this post' },
+    });
+  }
+
   posts.splice(idx, 1);
   return res.status(200).json({ ok: true });
 });
 
-// Hide a post — should be moderator/admin only.
-// TODO: gate with requireRole('moderator', 'admin').
-router.post('/:id/hide', (req, res) => {
+// Hiding posts is reserved for moderators and administrators.
+router.post('/:id/hide', requireRole('moderator', 'admin'), (req, res) => {
   const post = posts.find((p) => p.id === req.params.id);
   if (!post) return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Post not found' } });
   post.hidden = true;
